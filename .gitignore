@@ -1,0 +1,7 @@
+# Recordings and transcripts contain other people's voices and personal data - never commit
+sessions/
+# Local settings
+config.toml
+.venv/
+__pycache__/
+*.pyc
