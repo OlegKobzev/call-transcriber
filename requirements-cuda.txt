@@ -1,0 +1,3 @@
+# CUDA runtime for CTranslate2 on Windows (NVIDIA GPU only)
+nvidia-cublas-cu12==12.4.5.8
+nvidia-cudnn-cu12==9.1.0.70

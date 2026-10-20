@@ -1,0 +1,24 @@
+# Copy to config.toml (install.cmd does it) and adjust. Every line is optional.
+
+# Where recordings and transcripts go
+# sessions_dir = "D:/Calls"
+
+# Part of the device name; empty = Windows default. See `ct devices`.
+# call_device = "Headphones"
+# mic_device = "Headset"
+
+# Silent virtual output for `ct start --quiet-call` (Steam Streaming Speakers, CABLE Input for VB-Cable, ...)
+# quiet_device = "Steam Streaming Speakers"
+
+# Speech recognition: model on an NVIDIA GPU, smaller model on CPU
+# model = "large-v3"
+# cpu_model = "small"
+# device = "auto"   # auto | cuda | cpu
+# languages = ["uk", "ru"]
+# fallback_language = "uk"
+
+# Microphone fragments quieter than this are treated as room noise
+# mic_min_level_dbfs = -40.0
+
+# Seconds between transcription cycles during a call
+# interval_sec = 60

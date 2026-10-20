@@ -1,40 +1,46 @@
-"""Spike recorder: system loopback (them) + microphone (me) into two FLAC files.
+"""Recorder: call audio (WASAPI loopback) and microphone into two FLAC files.
 
-Also logs per-second signal levels and CPU/GPU load for the test session.
-Stop with Ctrl+C or by creating a STOP file in the session folder.
+Besides lossless FLAC, each track is also written as a 16 kHz mono float32 stream (<track>.pcm) that
+the transcriber reads incrementally; it is deleted once the transcript is done.
+Also logs per-second signal levels and CPU/GPU load. Stops when a STOP file appears in the session folder.
 
-With --monitor the call app outputs to a silent device (--out) and the recorder itself plays the
+With --quiet-call the call app outputs to a silent virtual device and the recorder itself plays the
 call into the default output. A MODE file in the session folder switches it at runtime:
 "listen" - I hear the call and the microphone is recorded; "silent" - I don't hear the call and
 the microphone is not recorded. The call itself is recorded in both modes.
 """
-import datetime
+import argparse
 import os
 import queue
 import subprocess
 import sys
 import threading
 import time
-import argparse
 
 import numpy as np
 import psutil
 import pyaudiowpatch as pyaudio
 import soundfile as sf
+import soxr
 
-ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "sessions")
+from . import config as config_module
+
+SR = 16000
 SILENCE_DBFS = -60.0
 SILENCE_WARN_SEC = 30
 
 
 class Track:
-    def __init__(self, name, device, path):
+    def __init__(self, name, device, session):
         self.name = name
         self.device = device
         self.rate = int(device["defaultSampleRate"])
         self.channels = max(1, int(device["maxInputChannels"]))
         self.queue = queue.Queue()
-        self.file = sf.SoundFile(path, "w", self.rate, self.channels, subtype="PCM_24", format="FLAC")
+        self.file = sf.SoundFile(os.path.join(session, f"{name}.flac"), "w", self.rate, self.channels,
+                                 subtype="PCM_24", format="FLAC")
+        self.pcm = open(os.path.join(session, f"{name}.pcm"), "ab")
+        self.resampler = soxr.ResampleStream(self.rate, SR, 1, dtype="float32")
         self.frames = 0
         self.level = -120.0
         self.silent_since = time.time()
@@ -65,7 +71,7 @@ class Track:
             self.monitor.feed(block)
         return (None, pyaudio.paContinue)
 
-    def drain(self, elapsed):
+    def drain(self, elapsed, last=False):
         self.pad_to(self.t0 + elapsed, 0.5)
         while True:
             try:
@@ -74,10 +80,18 @@ class Track:
                 break
             self.file.write(block)
             self.frames += len(block)
+            self.pcm.write(self.resampler.resample_chunk(block.mean(axis=1)).tobytes())
             rms = float(np.sqrt(np.mean(block ** 2))) if block.size else 0.0
             self.level = 20 * np.log10(rms) if rms > 0 else -120.0
             if self.level > SILENCE_DBFS:
                 self.silent_since = time.time()
+        if last:
+            self.pcm.write(self.resampler.resample_chunk(np.zeros(0, dtype=np.float32), last=True).tobytes())
+        self.pcm.flush()
+
+    def close(self):
+        self.file.close()
+        self.pcm.close()
 
 
 class Monitor:
@@ -112,16 +126,15 @@ class Monitor:
         return (out.astype(np.float32).tobytes(), pyaudio.paContinue)
 
 
-def find_device(pa, wanted, loopback):
+def wasapi_devices(pa):
     wasapi = pa.get_host_api_info_by_type(pyaudio.paWASAPI)["index"]
-    candidates = []
-    for i in range(pa.get_device_count()):
-        d = pa.get_device_info_by_index(i)
-        if d["hostApi"] != wasapi or not d["maxInputChannels"]:
-            continue
-        if d.get("isLoopbackDevice", False) != loopback:
-            continue
-        candidates.append(d)
+    return [d for d in (pa.get_device_info_by_index(i) for i in range(pa.get_device_count()))
+            if d["hostApi"] == wasapi]
+
+
+def find_device(pa, wanted, loopback):
+    candidates = [d for d in wasapi_devices(pa)
+                  if d["maxInputChannels"] and bool(d.get("isLoopbackDevice")) == loopback]
     if wanted:
         for d in candidates:
             if wanted.lower() in d["name"].lower():
@@ -129,32 +142,49 @@ def find_device(pa, wanted, loopback):
         sys.exit(f"No device matching '{wanted}': {[d['name'] for d in candidates]}")
     if loopback:
         return pa.get_default_wasapi_loopback()
+    default = pa.get_device_info_by_index(pa.get_host_api_info_by_type(pyaudio.paWASAPI)["defaultInputDevice"])
+    if "steam" not in default["name"].lower():
+        return default
     real = [d for d in candidates if "steam" not in d["name"].lower()]
     return (real or candidates)[0]
 
 
-def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--mic", help="substring of microphone name")
-    parser.add_argument("--no-mic", action="store_true",
-                        help="do not record the microphone (me.flac stays silent), e.g. while talking in another call")
-    parser.add_argument("--out", help="substring of output (loopback) device name")
-    parser.add_argument("--monitor", action="store_true",
-                        help="play the call into the default output; switch with a MODE file (listen/silent)")
-    parser.add_argument("--mode", choices=("listen", "silent"), default="listen", help="initial mode for --monitor")
-    args = parser.parse_args()
+def list_devices():
+    pa = pyaudio.PyAudio()
+    default_out = pa.get_device_info_by_index(pa.get_host_api_info_by_type(pyaudio.paWASAPI)["defaultOutputDevice"])
+    print("Outputs (call audio is recorded from one of these):")
+    for d in wasapi_devices(pa):
+        if d["maxOutputChannels"]:
+            mark = "  <- Windows default" if d["index"] == default_out["index"] else ""
+            print(f"  {d['name']}{mark}")
+    print("Microphones:")
+    for d in wasapi_devices(pa):
+        if d["maxInputChannels"] and not d.get("isLoopbackDevice"):
+            print(f"  {d['name']}")
+    pa.terminate()
 
-    session = os.path.abspath(os.path.join(ROOT, datetime.datetime.now().strftime("%Y-%m-%d %H%M")))
+
+def main(argv=None):
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--session", required=True)
+    parser.add_argument("--no-mic", action="store_true", help="do not record the microphone")
+    parser.add_argument("--quiet-call", action="store_true",
+                        help="record the silent virtual device and play the call into the default output")
+    parser.add_argument("--mode", choices=("listen", "silent"), default="listen")
+    args = parser.parse_args(argv)
+    config = config_module.load()
+
+    session = args.session
     os.makedirs(session, exist_ok=True)
     stop_file = os.path.join(session, "STOP")
     mode_file = os.path.join(session, "MODE")
 
     pa = pyaudio.PyAudio()
-    loopback = find_device(pa, args.out, loopback=True)
-    mic = find_device(pa, args.mic, loopback=False)
+    loopback = find_device(pa, config.quiet_device if args.quiet_call else config.call_device, loopback=True)
+    mic = find_device(pa, config.mic_device, loopback=False)
 
-    them = Track("them", loopback, os.path.join(session, "them.flac"))
-    me = Track("me", mic, os.path.join(session, "me.flac"))
+    them = Track("them", loopback, session)
+    me = Track("me", mic, session)
 
     start = time.time()
     them.t0 = me.t0 = start
@@ -165,11 +195,11 @@ def main():
                                frames_per_buffer=1024, stream_callback=track.callback))
 
     monitor = None
-    if args.monitor:
+    if args.quiet_call:
         wasapi = pa.get_host_api_info_by_type(pyaudio.paWASAPI)
         speaker = pa.get_device_info_by_index(wasapi["defaultOutputDevice"])
-        if "steam" in speaker["name"].lower():
-            sys.exit("Default output is the silent device; set headphones as the Windows default output")
+        if config.quiet_device.lower() in speaker["name"].lower():
+            sys.exit("Windows default output is the silent device; set headphones as the default output")
         monitor = Monitor(them.rate, them.channels)
         them.monitor = monitor
         streams.append(pa.open(format=pyaudio.paFloat32, channels=them.channels, rate=them.rate, output=True,
@@ -177,20 +207,25 @@ def main():
                                stream_callback=monitor.callback))
         with open(mode_file, "w") as f:
             f.write(args.mode)
-        print(f"Monitor -> {speaker['name']}; switch: write 'listen' or 'silent' into {mode_file}")
+        print(f"Playback -> {speaker['name']}")
     mode = None
+
     gpu_log = open(os.path.join(session, "gpu.csv"), "w")
-    gpu_proc = subprocess.Popen(
-        ["nvidia-smi", "--query-gpu=timestamp,utilization.gpu,memory.used,power.draw",
-         "--format=csv,noheader", "-l", "1"], stdout=gpu_log, stderr=subprocess.DEVNULL)
+    try:
+        gpu_proc = subprocess.Popen(
+            ["nvidia-smi", "--query-gpu=timestamp,utilization.gpu,memory.used,power.draw",
+             "--format=csv,noheader", "-l", "1"], stdout=gpu_log, stderr=subprocess.DEVNULL,
+            creationflags=subprocess.CREATE_NO_WINDOW)
+    except FileNotFoundError:
+        gpu_proc = None
 
     log = open(os.path.join(session, "levels.csv"), "w")
     log.write("sec,them_dbfs,me_dbfs,cpu_pct,ram_pct\n")
 
     print(f"Session: {session}")
     print(f"them <- {loopback['name']} ({them.rate} Hz, {them.channels} ch)")
-    print("me   <- (disabled)" if args.no_mic else f"me   <- {mic['name']} ({me.rate} Hz, {me.channels} ch)")
-    print(f"Stop: Ctrl+C or create file {stop_file}", flush=True)
+    print("me   <- (disabled)" if args.no_mic else f"me   <- {mic['name']} ({me.rate} Hz, {me.channels} ch)",
+          flush=True)
 
     warned = False
     try:
@@ -219,24 +254,24 @@ def main():
                 warned = True
             elif silent <= SILENCE_WARN_SEC:
                 warned = False
-            if sec % 60 == 0:
-                print(f"[{sec // 60} min] them {them.level:.0f} dBFS, me {me.level:.0f} dBFS", flush=True)
     except KeyboardInterrupt:
         pass
     finally:
         for s in streams:
             s.stop_stream()
             s.close()
-        them.drain(time.time() - start)
-        me.drain(time.time() - start)
-        them.file.close()
-        me.file.close()
-        gpu_proc.terminate()
+        them.drain(time.time() - start, last=True)
+        me.drain(time.time() - start, last=True)
+        them.close()
+        me.close()
+        if gpu_proc:
+            gpu_proc.terminate()
         gpu_log.close()
         log.close()
         pa.terminate()
-        print(f"Saved: them {them.frames / them.rate:.0f}s, me {me.frames / me.rate:.0f}s -> {session}")
+        open(os.path.join(session, "RECORDED"), "w").close()
+        print(f"Saved: them {them.frames / them.rate:.0f}s, me {me.frames / me.rate:.0f}s -> {session}", flush=True)
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    main()

@@ -2,23 +2,29 @@
 import os
 import re
 
-import nvidia.cublas
-import nvidia.cudnn
 import numpy as np
 
-# CTranslate2 on Windows needs the pip-installed CUDA DLLs on the search path
-for _pkg in (nvidia.cublas, nvidia.cudnn):
-    _bin = os.path.join(list(_pkg.__path__)[0], "bin")
-    os.add_dll_directory(_bin)
-    os.environ["PATH"] = _bin + os.pathsep + os.environ["PATH"]
 
+def _add_cuda_dlls():
+    """CTranslate2 on Windows needs the pip-installed CUDA DLLs on the search path."""
+    try:
+        import nvidia.cublas
+        import nvidia.cudnn
+    except ImportError:
+        return
+    for package in (nvidia.cublas, nvidia.cudnn):
+        path = os.path.join(list(package.__path__)[0], "bin")
+        if os.path.isdir(path):
+            os.add_dll_directory(path)
+            os.environ["PATH"] = path + os.pathsep + os.environ["PATH"]
+
+
+_add_cuda_dlls()
+
+import ctranslate2  # noqa: E402
 from faster_whisper import WhisperModel  # noqa: E402
 
 SR = 16000
-ALLOWED_LANGUAGES = {"uk", "ru"}
-FALLBACK_LANGUAGE = "uk"
-# Microphone: own voice is close to the mic; distant room speech and silence are quieter
-MIN_LEVEL_DBFS = {"me": -40.0, "them": None}
 MAX_NO_SPEECH_PROB = 0.6
 MIN_AVG_LOGPROB = -1.0
 MAX_COMPRESSION_RATIO = 2.4
@@ -31,8 +37,18 @@ HALLUCINATIONS = re.compile(
     re.IGNORECASE)
 
 
-def load_model(name="large-v3"):
-    return WhisperModel(name, device="cuda", compute_type="int8_float16")
+def cuda_available():
+    try:
+        return ctranslate2.get_cuda_device_count() > 0
+    except RuntimeError:
+        return False
+
+
+def load_model(config):
+    use_cuda = config.device == "cuda" or (config.device == "auto" and cuda_available())
+    if use_cuda:
+        return WhisperModel(config.model, device="cuda", compute_type="int8_float16"), f"{config.model} (cuda)"
+    return WhisperModel(config.cpu_model, device="cpu", compute_type="int8"), f"{config.cpu_model} (cpu)"
 
 
 def level_dbfs(audio):
@@ -50,16 +66,16 @@ def _run(model, audio, language):
     return list(segments), info
 
 
-def transcribe(model, audio, offset, stream):
+def transcribe(model, audio, offset, stream, config):
     """Transcribe one region; returns (kept, dropped) lists of segment dicts."""
     segments, info = _run(model, audio, None)
     language = info.language
-    if language not in ALLOWED_LANGUAGES:
-        segments, info = _run(model, audio, FALLBACK_LANGUAGE)
-        language = FALLBACK_LANGUAGE
+    if language not in config.languages:
+        segments, info = _run(model, audio, config.fallback_language)
+        language = config.fallback_language
 
     kept, dropped = [], []
-    min_level = MIN_LEVEL_DBFS.get(stream)
+    min_level = config.mic_min_level_dbfs if stream == "me" else None
     for seg in segments:
         item = {"stream": stream, "start": round(offset + seg.start, 2), "end": round(offset + seg.end, 2),
                 "text": seg.text.strip(), "language": language}

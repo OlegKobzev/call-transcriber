@@ -1,0 +1,3 @@
+# Only for tools/mute_test.py
+pycaw==20260927
+comtypes==1.4.10
