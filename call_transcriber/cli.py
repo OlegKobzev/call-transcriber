@@ -70,10 +70,21 @@ def cmd_cleanup(args, config):
     deleted, kept, freed = cleanup.run(config.sessions_dir, days, active, dry_run=args.dry_run)
     verb = "Would delete" if args.dry_run else "Deleted"
     for name, files in deleted:
-        print(f"{verb}: {name} ({', '.join(files)})")
+        print(f"{verb}: {name} ({'whole archived session' if files is None else ', '.join(files)})")
     for name, reason in kept:
         print(f"Kept: {name} - {reason}")
     print(f"{verb} {freed / 2**20:.0f} MB of audio older than {days} days")
+
+
+def cmd_archive(args, config):
+    from . import cleanup
+    session = resolve_session(args.session, config)
+    state = read_state(config)
+    if state and alive(state.get("recorder_pid")) and os.path.abspath(state["session"]) == os.path.abspath(session):
+        sys.exit("This session is still recording")
+    removed = cleanup.archive(session)
+    print(f"Archived {os.path.basename(session)}: removed {', '.join(removed) or 'no text files'}; "
+          f"audio is deleted after {config.keep_audio_days} days")
 
 
 def cmd_start(args, config):
@@ -228,12 +239,15 @@ def main(argv=None):
     cl = sub.add_parser("cleanup", help="delete audio of sessions older than keep_audio_days (transcripts kept)")
     cl.add_argument("--dry-run", action="store_true", help="only show what would be deleted")
     cl.add_argument("--days", type=int, help="override keep_audio_days")
+    ar = sub.add_parser("archive", help="transcript moved elsewhere: delete text from the session now, "
+                                        "the whole session after keep_audio_days")
+    ar.add_argument("session")
     op = sub.add_parser("open", help="open a transcript")
     op.add_argument("session", nargs="?", default="latest")
     args = parser.parse_args(argv)
     config = config_module.load()
     commands = {"start": cmd_start, "stop": cmd_stop, "status": cmd_status, "devices": cmd_devices,
-                "retranscribe": cmd_retranscribe, "open": cmd_open, "cleanup": cmd_cleanup,
+                "retranscribe": cmd_retranscribe, "open": cmd_open, "cleanup": cmd_cleanup, "archive": cmd_archive,
                 "listen": lambda a, c: set_mode("listen", c), "silent": lambda a, c: set_mode("silent", c)}
     commands[args.command](args, config)
 

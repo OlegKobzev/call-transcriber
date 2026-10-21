@@ -41,13 +41,16 @@ Add the folder to `PATH` to use `ct` from anywhere.
 | `ct open` | open the latest transcript |
 | `ct devices` | list audio devices and current settings |
 | `ct retranscribe [session]` | transcribe a finished session again with the current settings |
-| `ct cleanup [--dry-run]` | delete audio older than `keep_audio_days` (transcripts kept) |
+| `ct cleanup [--dry-run]` | apply the retention rules below now |
+| `ct archive <session>` | the transcript was moved elsewhere: delete text from the session now |
 
 Recordings go to `sessions\<date time>\`: `them.flac`, `me.flac`, `segments.jsonl`, `dropped.jsonl`
 (what the filters removed and why) and `transcript.md`.
 
 Audio is kept for 7 days (`keep_audio_days` in `config.toml`, 0 = forever) and then deleted automatically on
-`ct start` / `ct stop` — only for sessions that already have a transcript. Transcripts and logs are never deleted.
+`ct start` / `ct stop` — only for sessions that already have a transcript.
+If the transcript lives elsewhere (e.g. a notes vault), `ct archive <session>` deletes the session's text right away
+and the whole session folder goes after `keep_audio_days`.
 
 ### Not hearing a call while still recording it
 
