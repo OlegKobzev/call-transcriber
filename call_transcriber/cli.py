@@ -79,8 +79,11 @@ def cmd_start(args, config):
     with open(state_path(config), "w", encoding="utf-8") as f:
         json.dump({"session": session, "recorder_pid": recorder, "transcriber_pid": transcriber,
                    "quiet_call": args.quiet_call, "started": time.time()}, f)
-    print("\nRecording. Transcript (updated every minute):")
-    print(f"  {os.path.join(session, 'transcript.md')}")
+    if transcriber:
+        print("\nRecording. Transcript (updated every minute):")
+        print(f"  {os.path.join(session, 'transcript.md')}")
+    else:
+        print("\nRecording without live transcription. Afterwards: ct retranscribe")
     if args.quiet_call:
         print(f"Mode: {args.mode}. Switch with: ct listen | ct silent")
     print("Stop with: ct stop")
