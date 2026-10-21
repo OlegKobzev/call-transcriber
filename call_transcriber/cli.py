@@ -11,7 +11,9 @@ import psutil
 
 from . import config as config_module
 
-DETACHED = subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.CREATE_NO_WINDOW
+# No DETACHED_PROCESS: the venv python.exe is a launcher that starts the real interpreter as a child,
+# and a detached launcher makes that child open its own console window. A hidden console is inherited instead.
+BACKGROUND = subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.CREATE_NO_WINDOW
 
 
 def state_path(config):
@@ -35,7 +37,7 @@ def spawn(module, args, log_path):
     env = dict(os.environ, PYTHONUNBUFFERED="1", PYTHONIOENCODING="utf-8")
     return subprocess.Popen([sys.executable, "-m", f"call_transcriber.{module}", *args],
                             cwd=config_module.PROJECT_ROOT, stdout=log, stderr=subprocess.STDOUT,
-                            creationflags=DETACHED, env=env).pid
+                            creationflags=BACKGROUND, env=env).pid
 
 
 def tail(path, lines=5):
