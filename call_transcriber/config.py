@@ -27,6 +27,8 @@ class Config:
     mic_min_level_dbfs: float = -40.0
     # Seconds between transcription cycles during a call
     interval_sec: int = 60
+    # Audio (FLAC) of sessions older than this is deleted automatically once a transcript exists; 0 = never
+    keep_audio_days: int = 7
 
 
 def load():

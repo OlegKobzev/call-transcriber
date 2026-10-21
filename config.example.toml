@@ -22,3 +22,6 @@
 
 # Seconds between transcription cycles during a call
 # interval_sec = 60
+
+# Days to keep session audio; older audio is deleted automatically (only when a transcript exists). 0 = keep forever
+# keep_audio_days = 7

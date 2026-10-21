@@ -48,10 +48,39 @@ def tail(path, lines=5):
         return []
 
 
+def auto_cleanup(config):
+    if config.keep_audio_days <= 0:
+        return
+    from . import cleanup
+    deleted, kept, freed = cleanup.run(config.sessions_dir, config.keep_audio_days)
+    if deleted:
+        print(f"Deleted audio older than {config.keep_audio_days} days: {len(deleted)} session(s), "
+              f"{freed / 2**20:.0f} MB freed (transcripts kept)")
+    for name, reason in kept:
+        print(f"Kept audio of {name}: {reason}")
+
+
+def cmd_cleanup(args, config):
+    from . import cleanup
+    days = config.keep_audio_days if args.days is None else args.days
+    if days <= 0:
+        sys.exit("keep_audio_days is 0: audio is kept forever")
+    state = read_state(config)
+    active = state["session"] if state and alive(state.get("recorder_pid")) else None
+    deleted, kept, freed = cleanup.run(config.sessions_dir, days, active, dry_run=args.dry_run)
+    verb = "Would delete" if args.dry_run else "Deleted"
+    for name, files in deleted:
+        print(f"{verb}: {name} ({', '.join(files)})")
+    for name, reason in kept:
+        print(f"Kept: {name} - {reason}")
+    print(f"{verb} {freed / 2**20:.0f} MB of audio older than {days} days")
+
+
 def cmd_start(args, config):
     state = read_state(config)
     if state and alive(state.get("recorder_pid")):
         sys.exit(f"Already recording: {state['session']}  (ct stop first)")
+    auto_cleanup(config)
     os.makedirs(config.sessions_dir, exist_ok=True)
     session = os.path.join(config.sessions_dir, datetime.datetime.now().strftime("%Y-%m-%d %H%M%S"))
     os.makedirs(session)
@@ -114,6 +143,7 @@ def cmd_stop(args, config):
             print("Transcriber exited with an error, see " + live_log)
     os.remove(state_path(config))
     print(f"\nTranscript: {os.path.join(session, 'transcript.md')}")
+    auto_cleanup(config)
 
 
 def set_mode(mode, config):
@@ -195,12 +225,15 @@ def main(argv=None):
     sub.add_parser("devices", help="list audio devices and current settings")
     retr = sub.add_parser("retranscribe", help="transcribe a finished session again")
     retr.add_argument("session", nargs="?", default="latest")
+    cl = sub.add_parser("cleanup", help="delete audio of sessions older than keep_audio_days (transcripts kept)")
+    cl.add_argument("--dry-run", action="store_true", help="only show what would be deleted")
+    cl.add_argument("--days", type=int, help="override keep_audio_days")
     op = sub.add_parser("open", help="open a transcript")
     op.add_argument("session", nargs="?", default="latest")
     args = parser.parse_args(argv)
     config = config_module.load()
     commands = {"start": cmd_start, "stop": cmd_stop, "status": cmd_status, "devices": cmd_devices,
-                "retranscribe": cmd_retranscribe, "open": cmd_open,
+                "retranscribe": cmd_retranscribe, "open": cmd_open, "cleanup": cmd_cleanup,
                 "listen": lambda a, c: set_mode("listen", c), "silent": lambda a, c: set_mode("silent", c)}
     commands[args.command](args, config)
 
