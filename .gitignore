@@ -5,3 +5,5 @@ config.toml
 .venv/
 __pycache__/
 *.pyc
+# Generated device reports and captured audio
+diagnostics/

@@ -7,7 +7,7 @@ import json
 import os
 import time
 
-from faster_whisper import decode_audio
+from .audio import read_mono
 
 from . import asr
 from . import config as config_module
@@ -21,7 +21,7 @@ def main(session):
     print(f"Model {model_name}", flush=True)
     kept, dropped = [], []
     for stream in ("them", "me"):
-        audio = decode_audio(os.path.join(session, f"{stream}.flac"), sampling_rate=asr.SR)
+        audio = read_mono(os.path.join(session, f"{stream}.flac"), asr.SR)
         t = time.time()
         stream_kept, stream_dropped = [], []
         done, step = 0, 60 * asr.SR

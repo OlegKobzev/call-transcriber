@@ -24,6 +24,7 @@ import soundfile as sf
 import soxr
 
 from . import config as config_module
+from .audio import mono
 
 SR = 16000
 SILENCE_DBFS = -60.0
@@ -39,8 +40,16 @@ class Track:
         self.queue = queue.Queue()
         self.file = sf.SoundFile(os.path.join(session, f"{name}.flac"), "w", self.rate, self.channels,
                                  subtype="PCM_24", format="FLAC")
-        self.pcm = open(os.path.join(session, f"{name}.pcm"), "ab")
-        self.resampler = soxr.ResampleStream(self.rate, SR, 1, dtype="float32")
+        try:
+            self.pcm = open(os.path.join(session, f"{name}.pcm"), "ab")
+            try:
+                self.resampler = soxr.ResampleStream(self.rate, SR, 1, dtype="float32")
+            except BaseException:
+                self.pcm.close()
+                raise
+        except BaseException:
+            self.file.close()
+            raise
         self.frames = 0
         self.level = -120.0
         self.silent_since = time.time()
@@ -73,6 +82,7 @@ class Track:
 
     def drain(self, elapsed, last=False):
         self.pad_to(self.t0 + elapsed, 0.5)
+        power, samples = 0.0, 0
         while True:
             try:
                 block = self.queue.get_nowait()
@@ -80,11 +90,15 @@ class Track:
                 break
             self.file.write(block)
             self.frames += len(block)
-            self.pcm.write(self.resampler.resample_chunk(block.mean(axis=1)).tobytes())
-            rms = float(np.sqrt(np.mean(block ** 2))) if block.size else 0.0
-            self.level = 20 * np.log10(rms) if rms > 0 else -120.0
-            if self.level > SILENCE_DBFS:
+            self.pcm.write(self.resampler.resample_chunk(mono(block)).tobytes())
+            block_power = float(np.sum(np.square(block, dtype=np.float64)))
+            power += block_power
+            samples += block.size
+            rms = np.sqrt(block_power / block.size) if block.size else 0.0
+            if rms > 10 ** (SILENCE_DBFS / 20):
                 self.silent_since = time.time()
+        rms = np.sqrt(power / samples) if samples else 0.0
+        self.level = 20 * np.log10(rms) if rms > 0 else -120.0
         if last:
             self.pcm.write(self.resampler.resample_chunk(np.zeros(0, dtype=np.float32), last=True).tobytes())
         self.pcm.flush()
@@ -136,9 +150,11 @@ def find_device(pa, wanted, loopback):
     candidates = [d for d in wasapi_devices(pa)
                   if d["maxInputChannels"] and bool(d.get("isLoopbackDevice")) == loopback]
     if wanted:
-        for d in candidates:
-            if wanted.lower() in d["name"].lower():
-                return d
+        matches = [d for d in candidates if wanted.lower() in d["name"].lower()]
+        if len(matches) == 1:
+            return matches[0]
+        if len(matches) > 1:
+            sys.exit(f"Ambiguous device '{wanted}': {[d['name'] for d in matches]}")
         sys.exit(f"No device matching '{wanted}': {[d['name'] for d in candidates]}")
     if loopback:
         return pa.get_default_wasapi_loopback()
@@ -180,34 +196,45 @@ def main(argv=None):
     mode_file = os.path.join(session, "MODE")
 
     pa = pyaudio.PyAudio()
-    loopback = find_device(pa, config.quiet_device if args.quiet_call else config.call_device, loopback=True)
-    mic = find_device(pa, config.mic_device, loopback=False)
+    streams, tracks = [], []
+    try:
+        loopback = find_device(pa, config.quiet_device if args.quiet_call else config.call_device, loopback=True)
+        mic = (dict(defaultSampleRate=SR, maxInputChannels=1) if args.no_mic
+               else find_device(pa, config.mic_device, loopback=False))
 
-    them = Track("them", loopback, session)
-    me = Track("me", mic, session)
+        them = Track("them", loopback, session)
+        tracks.append(them)
+        me = Track("me", mic, session)
+        tracks.append(me)
 
-    start = time.time()
-    them.t0 = me.t0 = start
-    streams = []
-    for track in (them,) if args.no_mic else (them, me):
-        streams.append(pa.open(format=pyaudio.paFloat32, channels=track.channels, rate=track.rate,
-                               input=True, input_device_index=track.device["index"],
-                               frames_per_buffer=1024, stream_callback=track.callback))
+        start = time.time()
+        them.t0 = me.t0 = start
+        for track in (them,) if args.no_mic else (them, me):
+            streams.append(pa.open(format=pyaudio.paFloat32, channels=track.channels, rate=track.rate,
+                                   input=True, input_device_index=track.device["index"],
+                                   frames_per_buffer=1024, stream_callback=track.callback))
 
-    monitor = None
-    if args.quiet_call:
-        wasapi = pa.get_host_api_info_by_type(pyaudio.paWASAPI)
-        speaker = pa.get_device_info_by_index(wasapi["defaultOutputDevice"])
-        if config.quiet_device.lower() in speaker["name"].lower():
-            sys.exit("Windows default output is the silent device; set headphones as the default output")
-        monitor = Monitor(them.rate, them.channels)
-        them.monitor = monitor
-        streams.append(pa.open(format=pyaudio.paFloat32, channels=them.channels, rate=them.rate, output=True,
-                               output_device_index=speaker["index"], frames_per_buffer=512,
-                               stream_callback=monitor.callback))
-        with open(mode_file, "w") as f:
-            f.write(args.mode)
-        print(f"Playback -> {speaker['name']}")
+        monitor = None
+        if args.quiet_call:
+            wasapi = pa.get_host_api_info_by_type(pyaudio.paWASAPI)
+            speaker = pa.get_device_info_by_index(wasapi["defaultOutputDevice"])
+            if config.quiet_device.lower() in speaker["name"].lower():
+                sys.exit("Windows default output is the silent device; set headphones as the default output")
+            monitor = Monitor(them.rate, them.channels)
+            them.monitor = monitor
+            streams.append(pa.open(format=pyaudio.paFloat32, channels=them.channels, rate=them.rate, output=True,
+                                   output_device_index=speaker["index"], frames_per_buffer=512,
+                                   stream_callback=monitor.callback))
+            with open(mode_file, "w") as f:
+                f.write(args.mode)
+            print(f"Playback -> {speaker['name']}")
+    except BaseException:
+        for stream in streams:
+            stream.close()
+        for track in tracks:
+            track.close()
+        pa.terminate()
+        raise
     mode = None
 
     gpu_log = open(os.path.join(session, "gpu.csv"), "w")
