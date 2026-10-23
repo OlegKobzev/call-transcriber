@@ -36,6 +36,8 @@ Add the folder to `PATH` to use `ct` from anywhere.
 | Command | What it does |
 |---|---|
 | `ct start` | start recording and live transcription |
+| `ct watch --install` | record every Zoom call automatically (starts at Windows logon) |
+| `ct skip` | discard the automatic recording of the current call |
 | `ct status` | is it running, signal levels, last transcription cycle |
 | `ct stop` | stop, finish the transcript, print its path |
 | `ct open` | open the latest transcript |
@@ -51,6 +53,15 @@ Audio is kept for 7 days (`keep_audio_days` in `config.toml`, 0 = forever) and t
 `ct start` / `ct stop` — only for sessions that already have a transcript.
 If the transcript lives elsewhere (e.g. a notes vault), `ct archive <session>` deletes the session's text right away
 and the whole session folder goes after `keep_audio_days`.
+
+### Automatic recording
+
+`ct watch --install` starts a background watcher now and at every Windows logon (`ct watch --uninstall` removes it).
+It records while a call app from `watch_apps` (default: Zoom) is in a call — detected by the app holding the
+microphone, which Zoom does for the whole meeting even when muted — and stops about a minute after the call ends.
+Live transcription is used when at least `live_min_free_gb` of RAM is free at the start; otherwise the transcript
+is made right after the call. A Windows notification shows when recording starts and stops. Browser calls are not
+recorded automatically. Log: `sessions\watch.log`.
 
 ### Not hearing a call while still recording it
 

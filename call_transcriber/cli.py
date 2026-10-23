@@ -87,6 +87,25 @@ def cmd_archive(args, config):
           f"audio is deleted after {config.keep_audio_days} days")
 
 
+def cmd_watch(args, config):
+    from . import watch
+    if args.install:
+        watch.install()
+    elif args.uninstall:
+        watch.uninstall()
+    else:
+        watch.run(config)
+
+
+def cmd_skip(args, config):
+    from . import watch
+    state = read_state(config)
+    if not state or not alive(state.get("recorder_pid")) or not state.get("started_by_watch"):
+        sys.exit("No automatic recording is running")
+    open(watch.skip_file(config), "w").close()
+    print("This call's recording will be stopped and discarded within a few seconds")
+
+
 def cmd_start(args, config):
     state = read_state(config)
     if state and alive(state.get("recorder_pid")):
@@ -239,6 +258,10 @@ def main(argv=None):
     cl = sub.add_parser("cleanup", help="delete audio of sessions older than keep_audio_days (transcripts kept)")
     cl.add_argument("--dry-run", action="store_true", help="only show what would be deleted")
     cl.add_argument("--days", type=int, help="override keep_audio_days")
+    wa = sub.add_parser("watch", help="record automatically while a call app (Zoom) is in a call")
+    wa.add_argument("--install", action="store_true", help="run the watcher at Windows logon (and now)")
+    wa.add_argument("--uninstall", action="store_true", help="remove from logon and stop it")
+    sub.add_parser("skip", help="discard the automatic recording of the current call")
     ar = sub.add_parser("archive", help="transcript moved elsewhere: delete text from the session now, "
                                         "the whole session after keep_audio_days")
     ar.add_argument("session")
@@ -247,7 +270,7 @@ def main(argv=None):
     args = parser.parse_args(argv)
     config = config_module.load()
     commands = {"start": cmd_start, "stop": cmd_stop, "status": cmd_status, "devices": cmd_devices,
-                "retranscribe": cmd_retranscribe, "open": cmd_open, "cleanup": cmd_cleanup, "archive": cmd_archive,
+                "retranscribe": cmd_retranscribe, "open": cmd_open, "cleanup": cmd_cleanup, "archive": cmd_archive, "watch": cmd_watch, "skip": cmd_skip,
                 "listen": lambda a, c: set_mode("listen", c), "silent": lambda a, c: set_mode("silent", c)}
     commands[args.command](args, config)
 

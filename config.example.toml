@@ -25,3 +25,8 @@
 
 # Days to keep session audio; older audio is deleted automatically (only when a transcript exists). 0 = keep forever
 # keep_audio_days = 7
+
+# ct watch: record automatically while these apps are in a call (they hold the microphone)
+# watch_apps = ["Zoom.exe"]
+# watch_end_grace_sec = 60
+# live_min_free_gb = 5.0

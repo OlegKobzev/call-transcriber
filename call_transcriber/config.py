@@ -29,6 +29,12 @@ class Config:
     interval_sec: int = 60
     # Audio (FLAC) of sessions older than this is deleted automatically once a transcript exists; 0 = never
     keep_audio_days: int = 7
+    # ct watch: executables whose call starts/stops recording automatically
+    watch_apps: tuple = ("Zoom.exe",)
+    # Seconds without the call before the recording is stopped (rides out reconnects)
+    watch_end_grace_sec: int = 60
+    # Live transcription only when at least this much RAM is free at the start, otherwise after the call
+    live_min_free_gb: float = 5.0
 
 
 def load():
