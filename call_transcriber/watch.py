@@ -108,16 +108,15 @@ def notify(title, text):
 
 
 def chime(kind, config):
-    """Short tones in the headphones: rising = recording started, falling = stopped, low = discarded.
+    """One short beep in the headphones: high = recording started, lower = stopped, lowest = discarded.
 
     Played before starting and after stopping the recorder, so the tones themselves are not recorded.
     """
     if not config.watch_sound:
         return
-    tones = {"start": (660, 990), "stop": (990, 660), "skip": (440, 330)}[kind]
+    freq = {"start": 880, "stop": 523, "skip": 330}[kind]
     try:
-        for freq in tones:
-            winsound.Beep(freq, 180)
+        winsound.Beep(freq, 250)
     except RuntimeError:
         pass
 
