@@ -30,3 +30,4 @@
 # watch_apps = ["Zoom.exe"]
 # watch_end_grace_sec = 60
 # live_min_free_gb = 5.0
+# watch_sound = true   # tones when automatic recording starts/stops

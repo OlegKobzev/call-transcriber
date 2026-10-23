@@ -17,6 +17,7 @@ import shutil
 import subprocess
 import sys
 import time
+import winsound
 
 import psutil
 
@@ -106,6 +107,21 @@ def notify(title, text):
         pass
 
 
+def chime(kind, config):
+    """Short tones in the headphones: rising = recording started, falling = stopped, low = discarded.
+
+    Played before starting and after stopping the recorder, so the tones themselves are not recorded.
+    """
+    if not config.watch_sound:
+        return
+    tones = {"start": (660, 990), "stop": (990, 660), "skip": (440, 330)}[kind]
+    try:
+        for freq in tones:
+            winsound.Beep(freq, 180)
+    except RuntimeError:
+        pass
+
+
 def log(message, config):
     line = f"{time.strftime('%Y-%m-%d %H:%M:%S')} {message}"
     print(line, flush=True)
@@ -160,10 +176,12 @@ def run(config):
             log(f"skip requested: discarding {recording['session']}", config)
             cli.cmd_stop(argparse.Namespace(), config)
             shutil.rmtree(recording["session"], ignore_errors=True)
+            chime("skip", config)
             notify("Call Transcriber", "Recording of this call discarded")
             recording, skipped = None, True
         elif calling and not recording and not skipped and not active:
             log("call started: recording", config)
+            chime("start", config)
             recording = start_recording(config)
             mode = "with live transcript" if recording and recording.get("live") else "transcript after the call"
             notify("Call Transcriber", f"Recording started ({mode})")
@@ -171,6 +189,7 @@ def run(config):
             if recording:
                 log(f"call ended: stopping {recording['session']}", config)
                 stop_recording(recording, config)
+                chime("stop", config)
                 notify("Call Transcriber", "Recording stopped, transcript is being prepared")
                 recording = None
             skipped = False

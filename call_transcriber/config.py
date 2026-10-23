@@ -39,6 +39,8 @@ class Config:
     watch_end_grace_sec: int = 60
     # Live transcription only when at least this much RAM is free at the start, otherwise after the call
     live_min_free_gb: float = 5.0
+    # ct watch: short tones in the headphones when recording starts / stops
+    watch_sound: bool = True
 
 
 def load():
