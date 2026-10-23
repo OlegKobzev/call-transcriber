@@ -57,11 +57,12 @@ and the whole session folder goes after `keep_audio_days`.
 ### Automatic recording
 
 `ct watch --install` starts a background watcher now and at every Windows logon (`ct watch --uninstall` removes it).
-It records while a call app from `watch_apps` (default: Zoom) is in a call — detected by the app holding the
-microphone, which Zoom does for the whole meeting even when muted — and stops about a minute after the call ends.
+It records while a call is running: the Zoom app has its meeting window open, or a browser (Chrome, Edge) shows a
+meeting tab — window title matching `watch_title_pattern` (Zoom web client, Google Meet) — while playing audio.
+Recording continues while the meeting tab or browser audio remains, so switching tabs briefly does not stop it, and
+stops about a minute after both are gone.
 Live transcription is used when at least `live_min_free_gb` of RAM is free at the start; otherwise the transcript
-is made right after the call. A Windows notification shows when recording starts and stops. Browser calls are not
-recorded automatically. Log: `sessions\watch.log`.
+is made right after the call. A Windows notification shows when recording starts and stops. Log: `sessions\watch.log`.
 
 ### Not hearing a call while still recording it
 

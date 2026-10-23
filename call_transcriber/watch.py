@@ -1,56 +1,87 @@
-"""Start and stop recording automatically when a call app is in a call.
+"""Start and stop recording automatically when a call is running.
 
-Windows records which desktop apps are using the microphone (privacy "capability access" store).
-A call app such as Zoom keeps the microphone open for the whole meeting, even when muted, so
-"Zoom.exe is using the microphone" is a reliable "in a meeting" signal.
+Signals, checked every few seconds:
+- a call app (Zoom) has its meeting window open, or is playing audio;
+- a browser window shows a meeting tab (title matches watch_title_pattern, e.g. Zoom web client or
+  Google Meet) while the browser is playing audio.
+A recording starts on a strong signal (meeting window/tab + audio) and continues while any weak signal remains
+(meeting tab or browser audio), so briefly switching tabs does not stop it.
 """
 import argparse
+import ctypes
+import ctypes.wintypes as wintypes
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
 import time
-import winreg
 
 import psutil
 
 from . import cli
 from . import config as config_module
 
-MIC_STORE = r"Software\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore\microphone\NonPackaged"
 POLL_SEC = 5
 STARTUP_DIR = os.path.join(os.environ.get("APPDATA", ""), r"Microsoft\Windows\Start Menu\Programs\Startup")
 STARTUP_SCRIPT = os.path.join(STARTUP_DIR, "CallTranscriberWatch.vbs")
+# Zoom desktop: the in-meeting window classes (classic and Zoom Workplace)
+ZOOM_MEETING_CLASSES = {"ZPContentViewWndClass", "ConfMultiTabContentWndClass"}
 
 
-def apps_using_mic():
-    """Lower-case executable names that hold the microphone right now."""
-    in_use = set()
+def windows_by_exe(names):
+    """{exe: [(class, title, visible), ...]} for top-level windows of the given executables."""
+    names = {n.lower() for n in names}
+    pid_exe = {p.pid: p.info["name"].lower() for p in psutil.process_iter(["name"])
+               if (p.info["name"] or "").lower() in names}
+    found = {}
+    user32 = ctypes.windll.user32
+
+    @ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+    def callback(hwnd, _):
+        pid = wintypes.DWORD()
+        user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+        exe = pid_exe.get(pid.value)
+        if exe:
+            cls = ctypes.create_unicode_buffer(256)
+            title = ctypes.create_unicode_buffer(512)
+            user32.GetClassNameW(hwnd, cls, 256)
+            user32.GetWindowTextW(hwnd, title, 512)
+            found.setdefault(exe, []).append((cls.value, title.value, bool(user32.IsWindowVisible(hwnd))))
+        return True
+
+    user32.EnumWindows(callback, 0)
+    return found
+
+
+def apps_playing_audio():
+    """Lower-case executable names with an active audio session."""
     try:
-        store = winreg.OpenKey(winreg.HKEY_CURRENT_USER, MIC_STORE)
-    except OSError:
-        return in_use
-    with store:
-        index = 0
-        while True:
-            try:
-                name = winreg.EnumKey(store, index)
-            except OSError:
-                break
-            index += 1
-            try:
-                with winreg.OpenKey(store, name) as app:
-                    stop, _ = winreg.QueryValueEx(app, "LastUsedTimeStop")
-            except OSError:
-                continue
-            if stop == 0:
-                in_use.add(name.split("#")[-1].lower())
-    return in_use
+        import comtypes
+        from pycaw.pycaw import AudioUtilities
+        comtypes.CoInitialize()
+        return {s.Process.name().lower() for s in AudioUtilities.GetAllSessions() if s.Process and s.State == 1}
+    except Exception:
+        return set()
 
 
-def in_call(config):
-    return bool(apps_using_mic() & {a.lower() for a in config.watch_apps})
+def call_signals(config):
+    """(strong, weak): strong starts a recording, weak keeps it going."""
+    apps = [a.lower() for a in config.watch_apps]
+    browsers = [b.lower() for b in config.watch_browsers]
+    windows = windows_by_exe(apps + browsers)
+    audio = apps_playing_audio()
+    pattern = re.compile(config.watch_title_pattern, re.IGNORECASE)
+
+    app_meeting = any(cls in ZOOM_MEETING_CLASSES for a in apps for cls, _, _ in windows.get(a, []))
+    app_audio = any(a in audio for a in apps)
+    tab = any(visible and pattern.search(title) for b in browsers for _, title, visible in windows.get(b, []))
+    browser_audio = any(b in audio for b in browsers)
+
+    strong = app_meeting or (tab and browser_audio)
+    weak = strong or app_audio or tab or browser_audio
+    return strong, weak
 
 
 def notify(title, text):
@@ -116,7 +147,8 @@ def run(config):
     recording, skipped, last_seen = None, False, 0.0
     while True:
         now = time.time()
-        calling = in_call(config)
+        strong, weak = call_signals(config)
+        calling = strong or (recording is not None and weak)
         if calling:
             last_seen = now
         state = cli.read_state(config)

@@ -31,6 +31,9 @@ class Config:
     keep_audio_days: int = 7
     # ct watch: executables whose call starts/stops recording automatically
     watch_apps: tuple = ("Zoom.exe",)
+    # ct watch: browsers whose meeting tabs (window title) start a recording, and the title pattern
+    watch_browsers: tuple = ("chrome.exe", "msedge.exe")
+    watch_title_pattern: str = r"Zoom Meeting|Zoom Workplace|Google Meet|Meet [-–] "
     # Seconds without the call before the recording is stopped (rides out reconnects)
     watch_end_grace_sec: int = 60
     # Live transcription only when at least this much RAM is free at the start, otherwise after the call

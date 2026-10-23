@@ -4,6 +4,8 @@ soundfile==0.14.0
 soxr==1.1.0
 psutil==7.2.2
 numpy==2.4.2
+pycaw==20260927
+comtypes==1.4.10
 # Transitive dependencies pinned to versions verified together (av 19 breaks faster-whisper 1.2.1 decode_audio)
 av==18.0.0
 ctranslate2==4.8.1
