@@ -143,7 +143,7 @@ def skip_file(config):
 
 
 def run(config):
-    log(f"watching {', '.join(config.watch_apps)}", config)
+    log(f"watching {', '.join(config.watch_apps + config.watch_browsers)}", config)
     recording, skipped, last_seen = None, False, 0.0
     while True:
         now = time.time()
@@ -196,8 +196,9 @@ def uninstall():
         os.remove(STARTUP_SCRIPT)
     stopped = 0
     for p in psutil.process_iter(["name", "cmdline"]):
-        cmd = " ".join(p.info["cmdline"] or [])
-        if "call_transcriber" in cmd and " watch" in cmd and p.pid != os.getpid():
+        args = p.info["cmdline"] or []
+        # Only the running watcher ("-m call_transcriber watch"), not this --uninstall call or its launcher
+        if args[-2:] == ["call_transcriber", "watch"] and p.pid != os.getpid():
             p.terminate()
             stopped += 1
     print(f"Removed from startup; stopped {stopped} running watcher(s)")
