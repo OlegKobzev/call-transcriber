@@ -58,7 +58,8 @@ and the whole session folder goes after `keep_audio_days`.
 
 `ct watch --install` starts a background watcher now and at every Windows logon (`ct watch --uninstall` removes it).
 It records while a call is running: the Zoom app has its meeting window open, or a browser (Chrome, Edge) shows a
-meeting tab — window title matching `watch_title_pattern` (Zoom web client, Google Meet) — while playing audio.
+meeting tab — window title matching `watch_title_pattern` (by default the Zoom web client; add Google Meet in
+`config.toml` if wanted) — while playing audio.
 Recording continues while the meeting tab or browser audio remains, so switching tabs briefly does not stop it, and
 stops about a minute after both are gone.
 Live transcription is used when at least `live_min_free_gb` of RAM is free at the start; otherwise the transcript

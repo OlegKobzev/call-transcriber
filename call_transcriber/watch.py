@@ -2,8 +2,8 @@
 
 Signals, checked every few seconds:
 - a call app (Zoom) has its meeting window open, or is playing audio;
-- a browser window shows a meeting tab (title matches watch_title_pattern, e.g. Zoom web client or
-  Google Meet) while the browser is playing audio.
+- a browser window shows a meeting tab (title matches watch_title_pattern, by default the Zoom web
+  client) while the browser is playing audio.
 A recording starts on a strong signal (meeting window/tab + audio) and continues while any weak signal remains
 (meeting tab or browser audio), so briefly switching tabs does not stop it.
 """
@@ -74,7 +74,8 @@ def call_signals(config):
     audio = apps_playing_audio()
     pattern = re.compile(config.watch_title_pattern, re.IGNORECASE)
 
-    app_meeting = any(cls in ZOOM_MEETING_CLASSES for a in apps for cls, _, _ in windows.get(a, []))
+    # Zoom keeps hidden copies of these windows after a meeting, so only visible (incl. minimized) ones count
+    app_meeting = any(visible and cls in ZOOM_MEETING_CLASSES for a in apps for cls, _, visible in windows.get(a, []))
     app_audio = any(a in audio for a in apps)
     tab = any(visible and pattern.search(title) for b in browsers for _, title, visible in windows.get(b, []))
     browser_audio = any(b in audio for b in browsers)
