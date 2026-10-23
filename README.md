@@ -63,7 +63,7 @@ meeting tab — window title matching `watch_title_pattern` (by default the Zoom
 Recording continues while the meeting tab or browser audio remains, so switching tabs briefly does not stop it, and
 stops about a minute after both are gone.
 Live transcription is used when at least `live_min_free_gb` of RAM is free at the start; otherwise the transcript
-is made right after the call. A Windows notification and one short beep in the headphones (high — started, lower — stopped, lowest — discarded;
+is made right after the call. A Windows notification and beeps in the headphones (two high — started, one lower — stopped, one lowest — discarded;
 `watch_sound = false` turns tones off) show when recording starts and stops. Log: `sessions\watch.log`.
 
 ### Not hearing a call while still recording it
