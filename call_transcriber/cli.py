@@ -171,6 +171,12 @@ def cmd_stop(args, config):
             seen = len(lines)
         if not os.path.exists(os.path.join(session, "TRANSCRIBED")):
             print("Transcriber exited with an error, see " + live_log)
+    else:
+        # Without live transcription the 16 kHz stream is not needed: retranscribe reads the FLAC
+        for stream in ("them", "me"):
+            pcm = os.path.join(session, f"{stream}.pcm")
+            if os.path.exists(pcm):
+                os.remove(pcm)
     os.remove(state_path(config))
     print(f"\nTranscript: {os.path.join(session, 'transcript.md')}")
     auto_cleanup(config)

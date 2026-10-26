@@ -25,6 +25,7 @@ from . import cli
 from . import config as config_module
 
 POLL_SEC = 5
+STOP_BEEP_DELAY_SEC = 3
 STARTUP_DIR = os.path.join(os.environ.get("APPDATA", ""), r"Microsoft\Windows\Start Menu\Programs\Startup")
 STARTUP_SCRIPT = os.path.join(STARTUP_DIR, "CallTranscriberWatch.vbs")
 # Zoom desktop: the in-meeting window classes (classic and Zoom Workplace)
@@ -191,6 +192,9 @@ def run(config):
             if recording:
                 log(f"call ended: stopping {recording['session']}", config)
                 stop_recording(recording, config)
+                # Bluetooth headsets switch back from the headset to the music profile once the microphone is
+                # released; a beep played during that switch is lost, so wait a moment
+                time.sleep(STOP_BEEP_DELAY_SEC)
                 chime("stop", config)
                 notify("Call Transcriber", "Recording stopped, transcript is being prepared")
                 recording = None
