@@ -34,7 +34,8 @@ class Config:
     # ct watch: browsers whose meeting tabs (window title) start a recording, and the title pattern
     watch_browsers: tuple = ("chrome.exe", "msedge.exe")
     # Only Zoom by default; add e.g. "|Google Meet|Meet [-–] " in config.toml to record Meet calls too
-    watch_title_pattern: str = r"Zoom Meeting"
+    # Zoom web client tab titles in English, Russian and Ukrainian UI
+    watch_title_pattern: str = r"Zoom Meeting|Конференци[яі] Zoom"
     # Seconds without the call before the recording is stopped (rides out reconnects)
     watch_end_grace_sec: int = 60
     # Live transcription only when at least this much RAM is free at the start, otherwise after the call
