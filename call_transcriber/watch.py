@@ -17,6 +17,7 @@ import shutil
 import subprocess
 import sys
 import time
+import traceback
 import winsound
 
 import psutil
@@ -118,16 +119,20 @@ def recent_sound(state, seconds):
             rows = f.read().splitlines()[1:]
     except (OSError, KeyError):
         return False
-    if not rows:
-        return True  # just started
-    last = int(rows[-1].split(",")[0])
+    last = None
     for row in reversed(rows):
-        sec, them = row.split(",")[:2]
-        if last - int(sec) > seconds:
+        # The recorder appends to this file while we read it, so the last row may be cut off
+        try:
+            sec, them = int(row.split(",")[0]), float(row.split(",")[1])
+        except (ValueError, IndexError):
+            continue
+        if last is None:
+            last = sec
+        if last - sec > seconds:
             break
-        if float(them) > -60:
+        if them > -60:
             return True
-    return False
+    return last is None  # nothing measured yet: just started
 
 
 def notify(title, text):
@@ -210,52 +215,62 @@ def skip_file(config):
 
 def run(config):
     log(f"watching {', '.join(config.watch_apps + config.watch_browsers)}", config)
-    recording, skipped, last_seen = None, False, 0.0
+    context = {"recording": None, "skipped": False, "last_seen": 0.0}
     while True:
-        now = time.time()
-        strong, weak = call_signals(config)
-        state = cli.read_state(config)
-        active = state if state and cli.alive(state.get("recorder_pid")) else None
-        if recording and not active:
-            recording = None  # stopped from outside (ct stop)
-        current = recording or active
-        ongoing = weak or (current is not None and recent_sound(current, config.watch_silence_stop_sec))
-        calling = strong or (current is not None and ongoing)
-        if calling:
-            last_seen = now
-
-        if recording and os.path.exists(skip_file(config)):
-            os.remove(skip_file(config))
-            log(f"skip requested: discarding {recording['session']}", config)
-            cli.cmd_stop(argparse.Namespace(), config)
-            shutil.rmtree(recording["session"], ignore_errors=True)
-            chime("skip", config)
-            notify("Call Transcriber", "Recording of this call discarded")
-            recording, skipped = None, True
-        elif calling and not recording and active:
-            # A recording started by hand during a call: take it over so it also stops when the call ends
-            log(f"call in progress: taking over {active['session']}", config)
-            recording = active
-        elif calling and not recording and not skipped and not active:
-            log("call started: recording", config)
-            chime("start", config)
-            recording = start_recording(config)
-            mode = "with live transcript" if recording and recording.get("live") else "transcript after the call"
-            notify("Call Transcriber", f"Recording started ({mode})")
-        elif not calling and now - last_seen > config.watch_end_grace_sec:
-            if recording:
-                log(f"call ended: stopping {recording['session']}", config)
-                stop_recording(recording, config)
-                # Bluetooth headsets switch back from the headset to the music profile once the microphone is
-                # released; a beep played during that switch is lost, so wait a moment
-                time.sleep(STOP_BEEP_DELAY_SEC)
-                chime("stop", config)
-                notify("Call Transcriber", "Recording stopped, transcript is being prepared")
-                recording = None
-            skipped = False
-            if os.path.exists(skip_file(config)):
-                os.remove(skip_file(config))
+        # Under pythonw an uncaught error would end the watcher silently; log it and keep watching
+        try:
+            step(context, config)
+        except Exception:
+            log("error:\n" + traceback.format_exc(), config)
         time.sleep(POLL_SEC)
+
+
+def step(context, config):
+    recording, skipped, last_seen = context["recording"], context["skipped"], context["last_seen"]
+    now = time.time()
+    strong, weak = call_signals(config)
+    state = cli.read_state(config)
+    active = state if state and cli.alive(state.get("recorder_pid")) else None
+    if recording and not active:
+        recording = None  # stopped from outside (ct stop)
+    current = recording or active
+    ongoing = weak or (current is not None and recent_sound(current, config.watch_silence_stop_sec))
+    calling = strong or (current is not None and ongoing)
+    if calling:
+        last_seen = now
+
+    if recording and os.path.exists(skip_file(config)):
+        os.remove(skip_file(config))
+        log(f"skip requested: discarding {recording['session']}", config)
+        cli.cmd_stop(argparse.Namespace(), config)
+        shutil.rmtree(recording["session"], ignore_errors=True)
+        chime("skip", config)
+        notify("Call Transcriber", "Recording of this call discarded")
+        recording, skipped = None, True
+    elif calling and not recording and active:
+        # A recording started by hand during a call: take it over so it also stops when the call ends
+        log(f"call in progress: taking over {active['session']}", config)
+        recording = active
+    elif calling and not recording and not skipped and not active:
+        log("call started: recording", config)
+        chime("start", config)
+        recording = start_recording(config)
+        mode = "with live transcript" if recording and recording.get("live") else "transcript after the call"
+        notify("Call Transcriber", f"Recording started ({mode})")
+    elif not calling and now - last_seen > config.watch_end_grace_sec:
+        if recording:
+            log(f"call ended: stopping {recording['session']}", config)
+            stop_recording(recording, config)
+            # Bluetooth headsets switch back from the headset to the music profile once the microphone is
+            # released; a beep played during that switch is lost, so wait a moment
+            time.sleep(STOP_BEEP_DELAY_SEC)
+            chime("stop", config)
+            notify("Call Transcriber", "Recording stopped, transcript is being prepared")
+            recording = None
+        skipped = False
+        if os.path.exists(skip_file(config)):
+            os.remove(skip_file(config))
+    context.update(recording=recording, skipped=skipped, last_seen=last_seen)
 
 
 def install():
