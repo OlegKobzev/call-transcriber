@@ -39,6 +39,8 @@ class Config:
                                 r"|[Зз]ал персональн|[Пп]ерсональн\w* (зал|конференц)")
     # Seconds without the call before the recording is stopped (rides out reconnects)
     watch_end_grace_sec: int = 60
+    # While the meeting tab/window is not visible, keep recording as long as the call track had sound this recently
+    watch_silence_stop_sec: int = 300
     # Live transcription only when at least this much RAM is free at the start, otherwise after the call
     live_min_free_gb: float = 5.0
     # ct watch: short tones in the headphones when recording starts / stops

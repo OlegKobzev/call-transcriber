@@ -105,8 +105,29 @@ def call_signals(config):
     browser_audio = any(b in audio for b in browsers)
 
     strong = app_meeting or (tab and browser_audio)
-    weak = strong or app_audio or tab or browser_audio
+    # Browser audio sessions alone do not keep a call going: a browser routed to a virtual cable keeps its
+    # session active even in silence. Ongoing sound is checked on the recording itself (recent_sound).
+    weak = strong or app_audio or tab
     return strong, weak
+
+
+def recent_sound(state, seconds):
+    """True if the call track of the session had speech-level sound within the last `seconds`."""
+    try:
+        with open(os.path.join(state["session"], "levels.csv"), encoding="utf-8") as f:
+            rows = f.read().splitlines()[1:]
+    except (OSError, KeyError):
+        return False
+    if not rows:
+        return True  # just started
+    last = int(rows[-1].split(",")[0])
+    for row in reversed(rows):
+        sec, them = row.split(",")[:2]
+        if last - int(sec) > seconds:
+            break
+        if float(them) > -60:
+            return True
+    return False
 
 
 def notify(title, text):
@@ -173,7 +194,10 @@ def start_recording(config):
 
 
 def stop_recording(state, config):
-    cli.cmd_stop(argparse.Namespace(), config)
+    try:
+        cli.cmd_stop(argparse.Namespace(), config)
+    except SystemExit:
+        return
     if not state.get("live"):
         # Transcribe in the background so a following call can be recorded right away
         cli.spawn("cli", ["retranscribe", os.path.basename(state["session"])],
@@ -190,11 +214,15 @@ def run(config):
     while True:
         now = time.time()
         strong, weak = call_signals(config)
-        calling = strong or (recording is not None and weak)
-        if calling:
-            last_seen = now
         state = cli.read_state(config)
         active = state if state and cli.alive(state.get("recorder_pid")) else None
+        if recording and not active:
+            recording = None  # stopped from outside (ct stop)
+        current = recording or active
+        ongoing = weak or (current is not None and recent_sound(current, config.watch_silence_stop_sec))
+        calling = strong or (current is not None and ongoing)
+        if calling:
+            last_seen = now
 
         if recording and os.path.exists(skip_file(config)):
             os.remove(skip_file(config))
