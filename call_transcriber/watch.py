@@ -58,12 +58,34 @@ def windows_by_exe(names):
 
 
 def apps_playing_audio():
-    """Lower-case executable names with an active audio session."""
+    """Lower-case executable names with an active audio session on any device.
+
+    Not only the default device: a browser may be routed to a virtual cable (e.g. for another app to listen).
+    """
     try:
+        import warnings
+        from ctypes import POINTER, cast
         import comtypes
-        from pycaw.pycaw import AudioUtilities
+        from comtypes import CLSCTX_ALL
+        from pycaw.pycaw import AudioUtilities, IAudioSessionControl2, IAudioSessionManager2
         comtypes.CoInitialize()
-        return {s.Process.name().lower() for s in AudioUtilities.GetAllSessions() if s.Process and s.State == 1}
+        active = set()
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            devices = AudioUtilities.GetAllDevices()
+        for device in devices:
+            try:
+                manager = cast(device._dev.Activate(IAudioSessionManager2._iid_, CLSCTX_ALL, None),
+                               POINTER(IAudioSessionManager2))
+                sessions = manager.GetSessionEnumerator()
+                for i in range(sessions.GetCount()):
+                    control = sessions.GetSession(i).QueryInterface(IAudioSessionControl2)
+                    pid = control.GetProcessId()
+                    if pid and control.GetState() == 1:
+                        active.add(psutil.Process(pid).name().lower())
+            except Exception:
+                continue
+        return active
     except Exception:
         return set()
 
