@@ -204,6 +204,10 @@ def run(config):
             chime("skip", config)
             notify("Call Transcriber", "Recording of this call discarded")
             recording, skipped = None, True
+        elif calling and not recording and active:
+            # A recording started by hand during a call: take it over so it also stops when the call ends
+            log(f"call in progress: taking over {active['session']}", config)
+            recording = active
         elif calling and not recording and not skipped and not active:
             log("call started: recording", config)
             chime("start", config)
