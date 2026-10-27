@@ -93,8 +93,10 @@ def cmd_watch(args, config):
         watch.install()
     elif args.uninstall:
         watch.uninstall()
-    else:
+    elif args.worker:
         watch.run(config)
+    else:
+        watch.supervise(config)
 
 
 def cmd_skip(args, config):
@@ -267,6 +269,7 @@ def main(argv=None):
     wa = sub.add_parser("watch", help="record automatically while a call app (Zoom) is in a call")
     wa.add_argument("--install", action="store_true", help="run the watcher at Windows logon (and now)")
     wa.add_argument("--uninstall", action="store_true", help="remove from logon and stop it")
+    wa.add_argument("--worker", action="store_true", help=argparse.SUPPRESS)
     sub.add_parser("skip", help="discard the automatic recording of the current call")
     ar = sub.add_parser("archive", help="transcript moved elsewhere: delete text from the session now, "
                                         "the whole session after keep_audio_days")

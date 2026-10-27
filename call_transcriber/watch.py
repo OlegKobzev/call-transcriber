@@ -68,12 +68,14 @@ def apps_playing_audio():
         from ctypes import POINTER, cast
         import comtypes
         from comtypes import CLSCTX_ALL
+        from pycaw.constants import DEVICE_STATE, EDataFlow
         from pycaw.pycaw import AudioUtilities, IAudioSessionControl2, IAudioSessionManager2
         comtypes.CoInitialize()
         active = set()
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
-            devices = AudioUtilities.GetAllDevices()
+            # Only connected playback devices: activating disabled or unplugged ones can crash in native code
+            devices = AudioUtilities.GetAllDevices(EDataFlow.eRender.value, DEVICE_STATE.ACTIVE.value)
         for device in devices:
             try:
                 manager = cast(device._dev.Activate(IAudioSessionManager2._iid_, CLSCTX_ALL, None),
@@ -213,6 +215,19 @@ def skip_file(config):
     return os.path.join(config.sessions_dir, "SKIP_CALL")
 
 
+def supervise(config):
+    """Run the watcher in a child process and restart it if it dies.
+
+    Querying windows and audio sessions goes through native code (ctypes, COM), where a fault kills the process
+    outright instead of raising. A restarted watcher takes over a recording that is still running.
+    """
+    while True:
+        child = subprocess.run([sys.executable, "-m", "call_transcriber", "watch", "--worker"],
+                               cwd=config_module.PROJECT_ROOT, creationflags=subprocess.CREATE_NO_WINDOW)
+        log(f"watcher exited with code {child.returncode:#x}, restarting", config)
+        time.sleep(POLL_SEC)
+
+
 def run(config):
     log(f"watching {', '.join(config.watch_apps + config.watch_browsers)}", config)
     context = {"recording": None, "skipped": False, "last_seen": 0.0}
@@ -292,8 +307,8 @@ def uninstall():
     stopped = 0
     for p in psutil.process_iter(["name", "cmdline"]):
         args = p.info["cmdline"] or []
-        # Only the running watcher ("-m call_transcriber watch"), not this --uninstall call or its launcher
-        if args[-2:] == ["call_transcriber", "watch"] and p.pid != os.getpid():
+        # Only the running watcher and its worker, not this --uninstall call or its launcher
+        if args[-2:] in (["call_transcriber", "watch"], ["watch", "--worker"]) and p.pid != os.getpid():
             p.terminate()
             stopped += 1
     print(f"Removed from startup; stopped {stopped} running watcher(s)")
